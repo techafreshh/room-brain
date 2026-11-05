@@ -104,11 +104,15 @@ def _is_expired(draft):
     return _draft_age_seconds(draft) > EXPIRY_SECONDS
 
 
-def _archive_sent(draft, approver):
+def _archive_sent(draft, approver, confirmation=None):
     directory = _sent_dir()
     os.makedirs(directory, exist_ok=True)
     draft_id = str(draft.get("id", "") or "")
     stamp = datetime.now(timezone.utc).isoformat()
+    if confirmation:
+        status = "Status: sent %s" % confirmation
+    else:
+        status = "Status: approval recorded; send skipped"
     lines = [
         "# " + draft_id + " " + str(draft.get("kind", "")) + ": "
         + str(draft.get("topic", "")),
@@ -118,7 +122,7 @@ def _archive_sent(draft, approver):
         "Owner: " + str(draft.get("owner", "")),
         "Approver: " + str(approver or ""),
         "Approved: " + stamp,
-        "Status: approval recorded; send skipped",
+        status,
         "",
         str(draft.get("body", "")),
         "",
@@ -235,23 +239,32 @@ def handle_approve(arg, ctx=None):
     except Exception:
         pass
     sent_ok = False
+    confirmation = ""
     try:
         if draft.get("kind") == "linear":
             from actions.linear_action import create_issue
 
-            sent_ok = bool(create_issue(draft))
+            confirmation = create_issue(draft) or ""
         else:
             from actions.gmail_action import send_draft
 
-            sent_ok = bool(send_draft(draft))
+            confirmation = send_draft(draft) or ""
+        if isinstance(confirmation, bool):
+            confirmation = ""
+        confirmation = str(confirmation or "").strip()
+        sent_ok = bool(confirmation)
     except Exception:
         sent_ok = False
+        confirmation = ""
     try:
-        _archive_sent(draft, sender)
+        _archive_sent(draft, sender, confirmation if sent_ok else None)
     except Exception:
         pass
     if sent_ok:
-        return "sent " + str(draft.get("kind", "")) + " " + str(draft.get("id", ""))
+        return (
+            "sent " + str(draft.get("kind", "")) + " "
+            + str(draft.get("id", "")) + " " + confirmation
+        )
     return (
         "approval recorded; send skipped (draft "
         + str(draft.get("id", ""))
