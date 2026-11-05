@@ -206,9 +206,12 @@ async def run_forever(
         frame_type,
         is_taken_over,
         message_body,
+        message_room,
+        parse_command,
         parse_connection_state,
         parse_frame,
     )
+    from roombrain.agent.ops import post_message
 
     cid = connection_id or load_or_create_connection_id(env_path)
     if isinstance(rooms, (list, tuple)):
@@ -300,7 +303,33 @@ async def run_forever(
                         continue
                     body = message_body(frame)
                     if body is not None:
+                        cmd = parse_command(body)
+                        if cmd is None:
+                            continue
                         print(body, flush=True)
+                        name, _args = cmd
+                        if name != "ping":
+                            continue
+                        room_id = message_room(frame)
+                        if not room_id:
+                            if isinstance(rooms, (list, tuple)):
+                                room_id = str(rooms[0]) if rooms else ""
+                            elif rooms_str:
+                                room_id = rooms_str.split(",")[0].strip()
+                            else:
+                                room_id = ""
+                        try:
+                            await asyncio.to_thread(
+                                post_message,
+                                server,
+                                agent_id,
+                                api_key,
+                                cid,
+                                room_id,
+                                "pong",
+                            )
+                        except Exception:
+                            pass
         except TakenOver:
             raise
         except (ConnectionClosed, WebSocketException, OSError,
