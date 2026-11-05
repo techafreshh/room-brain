@@ -310,6 +310,18 @@ async def run_forever(
                             continue
                         print(body, flush=True)
                         name, _args = cmd
+                        try:
+                            _room_probe = message_room(frame)
+                            _sender_probe = message_sender(frame)
+                            if _room_probe and _sender_probe:
+                                from actions.gate import ensure_owner as _ensure_owner
+
+                                try:
+                                    _ensure_owner(_room_probe, _sender_probe)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                         if name == "ping":
                             room_id = message_room(frame)
                             if not room_id:
@@ -350,6 +362,45 @@ async def run_forever(
                                         "room": room_id,
                                         "actor": message_sender(frame) or "",
                                         "thread_id": message_thread(frame) or "",
+                                    },
+                                )
+                            except Exception:
+                                reply = None
+                            if not reply:
+                                continue
+                            try:
+                                await asyncio.to_thread(
+                                    post_message,
+                                    server,
+                                    agent_id,
+                                    api_key,
+                                    cid,
+                                    room_id,
+                                    reply,
+                                )
+                            except Exception:
+                                pass
+                        elif name in ("draft", "approve", "reject"):
+                            from actions.gate import dispatch_gate
+
+                            room_id = message_room(frame)
+                            if not room_id:
+                                if isinstance(rooms, (list, tuple)):
+                                    room_id = str(rooms[0]) if rooms else ""
+                                elif rooms_str:
+                                    room_id = rooms_str.split(",")[0].strip()
+                                else:
+                                    room_id = ""
+                            try:
+                                reply = dispatch_gate(
+                                    name,
+                                    _args,
+                                    {
+                                        "room": room_id,
+                                        "sender": message_sender(frame) or "",
+                                        "requester": message_sender(frame) or "",
+                                        "thread_id": message_thread(frame) or "",
+                                        "agent_id": agent_id,
                                     },
                                 )
                             except Exception:
