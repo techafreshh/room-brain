@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB_PATH = os.path.join("data", "roombrain.db")
 EMBEDDING_DIM = 384
@@ -168,3 +168,57 @@ def search_memories(query, limit=5, db_path=None):
         ]
     finally:
         conn.close()
+
+
+def list_decisions(topic="", days=7, limit=20, db_path=None):
+    """Latest decision-kind memories, newest first (never raises)."""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 20))
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 7
+    try:
+        conn, _ = _open(db_path)
+    except Exception:
+        return []
+    try:
+        sql = (
+            "SELECT id, text, room, actor, thread_id, timestamp, kind, confidence"
+            " FROM memories WHERE kind = 'decision'"
+        )
+        params = []
+        if topic and str(topic).strip():
+            sql += " AND text LIKE ?"
+            params.append("%" + str(topic).strip() + "%")
+        if days and days > 0:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).isoformat()
+            sql += " AND timestamp >= ?"
+            params.append(cutoff)
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT %d" % limit
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "id": r[0],
+                "text": r[1],
+                "room": r[2],
+                "actor": r[3],
+                "thread_id": r[4],
+                "timestamp": r[5],
+                "kind": r[6],
+                "confidence": r[7],
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
