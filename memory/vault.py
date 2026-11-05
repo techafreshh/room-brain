@@ -88,11 +88,11 @@ def _serialize_embedding(embedding):
 
 
 def upsert_memory(text, room, actor, thread_id, kind, confidence,
-                  embedding=None, db_path=None):
+                  embedding=None, db_path=None, *, timestamp=None):
     """Insert a memory row (plain INSERT, new id) and return its integer id."""
     conn, vec_ok = _open(db_path)
     try:
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = timestamp or datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
             "INSERT INTO memories (text, room, actor, thread_id, timestamp, kind, confidence)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -222,3 +222,15 @@ def list_decisions(topic="", days=7, limit=20, db_path=None):
             conn.close()
         except Exception:
             pass
+
+
+def hybrid_search(query, limit=5, db_path=None):
+    """Ranked recall over the vault (canonical impl lives in retrieve).
+
+    Lazy delegation avoids a vault<->retrieve import cycle while letting
+    callers import hybrid_search from memory.vault, memory.retrieve, or
+    memory with identical behavior.
+    """
+    from memory.retrieve import hybrid_search as _impl
+
+    return _impl(query, limit, db_path=db_path)
