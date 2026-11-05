@@ -97,14 +97,18 @@ def run_echo(health_port):
         file=sys.stderr,
     )
     try:
-        for line in sys.stdin:
+        while True:
+            try:
+                line = sys.stdin.readline()
+            except (OSError, ValueError):
+                break  # stdin unreadable: keep serving health.
+            if not line:
+                break  # EOF: keep serving health until terminated.
             if line.strip():
                 try:
                     print(format_echo_line(line), flush=True)
                 except BrokenPipeError:
                     pass
-        # stdin hit EOF (e.g. launched detached with stdin closed): the
-        # health server must stay up, so wait until terminated.
         thread.join()
     except KeyboardInterrupt:
         pass
