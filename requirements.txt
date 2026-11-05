@@ -1,3 +1,4 @@
 httpx
 websockets>=15
 pydantic>=2
+sqlite-vec
