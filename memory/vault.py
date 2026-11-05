@@ -57,6 +57,28 @@ def _ensure_schema(conn, with_vec=False):
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS drafts ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "draft_uid TEXT UNIQUE, "
+        "kind TEXT NOT NULL DEFAULT '', "
+        "topic TEXT NOT NULL DEFAULT '', "
+        "body TEXT NOT NULL DEFAULT '', "
+        "room TEXT NOT NULL DEFAULT '', "
+        "requester TEXT NOT NULL DEFAULT '', "
+        "owner TEXT NOT NULL DEFAULT '', "
+        "approver TEXT NOT NULL DEFAULT '', "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "created_at TEXT NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS room_owners ("
+        "room TEXT PRIMARY KEY, "
+        "owner TEXT NOT NULL, "
+        "seen_at TEXT NOT NULL"
+        ")"
+    )
     if with_vec:
         try:
             conn.execute(
@@ -234,3 +256,154 @@ def hybrid_search(query, limit=5, db_path=None):
     from memory.retrieve import hybrid_search as _impl
 
     return _impl(query, limit, db_path=db_path)
+
+
+def stage_draft(kind, topic, body, room, requester, owner="",
+                db_path=None, *, created_at=None):
+    """Stage one pending draft; return its id (``d<rowid>``)."""
+    conn, _ = _open(db_path)
+    try:
+        stamp = created_at or datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT INTO drafts (kind, topic, body, room, requester,"
+            " owner, approver, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, '', 'pending', ?)",
+            (kind or "", topic or "", body or "", room or "",
+             requester or "", owner or "", stamp),
+        )
+        row_id = int(cur.lastrowid)
+        uid = "d%d" % row_id
+        try:
+            conn.execute(
+                "UPDATE drafts SET draft_uid = ? WHERE id = ?",
+                (uid, row_id),
+            )
+        except Exception:
+            pass
+        conn.commit()
+        return uid
+    finally:
+        conn.close()
+
+
+def _draft_to_dict(row):
+    return {
+        "id": row[1],
+        "rowid": row[0],
+        "kind": row[2],
+        "topic": row[3],
+        "body": row[4],
+        "room": row[5],
+        "requester": row[6],
+        "owner": row[7],
+        "approver": row[8],
+        "status": row[9],
+        "created_at": row[10],
+    }
+
+
+_DRAFT_COLS = ("id", "draft_uid", "kind", "topic", "body", "room",\
+               "requester", "owner", "approver", "status", "created_at")
+
+
+def get_draft(draft_id, db_path=None):
+    """Fetch one draft by ``d<rowid>`` id; None when unknown."""
+    uid = str(draft_id or "").strip().lower()
+    if not uid:
+        return None
+    conn, _ = _open(db_path)
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_DRAFT_COLS) + " FROM drafts"
+            " WHERE draft_uid = ?",
+            (uid,),
+        ).fetchone()
+        if row is None and uid.isdigit():
+            row = conn.execute(
+                "SELECT " + ", ".join(_DRAFT_COLS) + " FROM drafts"
+                " WHERE draft_uid = ?",
+                ("d" + uid,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _draft_to_dict(row)
+    finally:
+        conn.close()
+
+
+def pending_draft_for_room(room, db_path=None):
+    """Latest pending draft for a room; None when there is none."""
+    conn, _ = _open(db_path)
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_DRAFT_COLS) + " FROM drafts"
+            " WHERE room = ? AND status = 'pending'"
+            " ORDER BY id DESC LIMIT 1",
+            (room or "",),
+        ).fetchone()
+        if row is None:
+            return None
+        return _draft_to_dict(row)
+    finally:
+        conn.close()
+
+
+def mark_draft(draft_id, status, approver=None, db_path=None):
+    """Update a draft's status (and approver when given)."""
+    uid = str(draft_id or "").strip().lower()
+    if not uid:
+        return False
+    conn, _ = _open(db_path)
+    try:
+        if approver is None:
+            cur = conn.execute(
+                "UPDATE drafts SET status = ? WHERE draft_uid = ?",
+                (status, uid),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE drafts SET status = ?, approver = ?"
+                " WHERE draft_uid = ?",
+                (status, approver or "", uid),
+            )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def record_room_owner(room, owner, db_path=None):
+    """Persist the first human sender per room; never overwrite."""
+    if not room or not owner:
+        return None
+    conn, _ = _open(db_path)
+    try:
+        stamp = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO room_owners (room, owner, seen_at)"
+            " VALUES (?, ?, ?)",
+            (room, owner, stamp),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT owner FROM room_owners WHERE room = ?", (room,),
+        ).fetchone()
+        return row[0] if row else owner
+    finally:
+        conn.close()
+
+
+def get_room_owner(room, db_path=None):
+    """Owner recorded for a room; None when no human seen yet."""
+    if not room:
+        return None
+    conn, _ = _open(db_path)
+    try:
+        row = conn.execute(
+            "SELECT owner FROM room_owners WHERE room = ?", (room,),
+        ).fetchone()
+        if row is None or not row[0]:
+            return None
+        return row[0]
+    finally:
+        conn.close()
