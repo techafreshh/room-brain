@@ -2,6 +2,7 @@
 
 import argparse
 import http.server
+import os
 import sys
 import threading
 
@@ -36,7 +37,27 @@ def build_parser():
     sub = parser.add_subparsers(title="commands", dest="command")
     p_register = sub.add_parser(
         "register",
-        help="Register this agent with the Switch (reserved for a later lap).",
+        help="Register this agent with the Switch (idempotent, persists to .env).",
+    )
+    p_register.add_argument(
+        "--server",
+        default=os.environ.get("SWITCH_SERVER_URL", "http://127.0.0.1:8000"),
+        help="Switch server base URL (default: SWITCH_SERVER_URL or %(default)s).",
+    )
+    p_register.add_argument(
+        "--token",
+        default=os.environ.get("AGENT_REGISTRATION_TOKEN", ""),
+        help="One-shot registration token (default: AGENT_REGISTRATION_TOKEN).",
+    )
+    p_register.add_argument(
+        "--name",
+        default="roombrain",
+        help="Agent name to register (default: %(default)s).",
+    )
+    p_register.add_argument(
+        "--env-file",
+        default=".env",
+        help="Env file for ROOMBRAIN_AGENT_ID/API_KEY (default: %(default)s).",
     )
     p_register.set_defaults(func=cmd_register)
     p_run = sub.add_parser(
@@ -64,7 +85,33 @@ def build_parser():
 
 
 def cmd_register(args):
-    print("register: reserved for a later lap (no Switch client yet).")
+    from roombrain.agent.protocol import RegistrationConflict, read_env_values
+
+    env_path = getattr(args, "env_file", None) or ".env"
+    stored = read_env_values(env_path)
+    stored_id = (stored.get("ROOMBRAIN_AGENT_ID") or "").strip()
+    stored_key = (stored.get("ROOMBRAIN_API_KEY") or "").strip()
+    if stored_id and stored_key:
+        print("reuse: agent %s already registered, skipping POST" % stored_id)
+        return 0
+    server = getattr(args, "server", None) or os.environ.get(
+        "SWITCH_SERVER_URL", "http://127.0.0.1:8000"
+    )
+    token = getattr(args, "token", None) or os.environ.get(
+        "AGENT_REGISTRATION_TOKEN", ""
+    )
+    name = getattr(args, "name", None) or "roombrain"
+    try:
+        from roombrain.agent.protocol import register_agent
+
+        agent_id, _, _ = register_agent(server, token, name, env_path)
+    except RegistrationConflict as exc:
+        print("reuse: %s" % exc)
+        return 0
+    except Exception as exc:
+        print("register: failed: %s" % exc, file=sys.stderr)
+        return 1
+    print("registered: agent %s" % agent_id)
     return 0
 
 
