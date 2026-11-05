@@ -126,6 +126,32 @@ def build_parser():
         help="Vault DB path (default: ROOMBRAIN_DB or data/roombrain.db).",
     )
     p_seed.set_defaults(func=cmd_seed_demo)
+    p_brief = sub.add_parser(
+        "brief",
+        help="Compose the morning brief and push it via POST /agents/{id}/message.",
+    )
+    p_brief.add_argument(
+        "--room",
+        default="",
+        help="Room to deliver the brief to "
+        "(default: first entry of ROOMBRAIN_ROOMS).",
+    )
+    p_brief.add_argument(
+        "--server",
+        default=os.environ.get("SWITCH_SERVER_URL", "http://127.0.0.1:8000"),
+        help="Switch server base URL (default: SWITCH_SERVER_URL or %(default)s).",
+    )
+    p_brief.add_argument(
+        "--env-file",
+        default=".env",
+        help="Env file for credentials/connection id (default: %(default)s).",
+    )
+    p_brief.add_argument(
+        "--db-path",
+        default=None,
+        help="Vault DB path (default: ROOMBRAIN_DB or data/roombrain.db).",
+    )
+    p_brief.set_defaults(func=cmd_brief)
     return parser
 
 
@@ -198,6 +224,44 @@ def cmd_seed_demo(args):
         db_path=db_path,
     )
     print("seeded %d memories (mode=live)" % total)
+    return 0
+
+
+def cmd_brief(args):
+    from roombrain.agent.protocol import read_env_values
+
+    env_path = getattr(args, "env_file", None) or ".env"
+    merged = dict(read_env_values(env_path))
+    merged.update(os.environ)
+    agent_id = (merged.get("ROOMBRAIN_AGENT_ID") or "").strip()
+    api_key = (merged.get("ROOMBRAIN_API_KEY") or "").strip()
+    if not agent_id or not api_key:
+        print(
+            "brief: missing ROOMBRAIN_AGENT_ID/ROOMBRAIN_API_KEY "
+            "(register first)",
+            file=sys.stderr,
+        )
+        return 2
+    server = getattr(args, "server", None) or merged.get(
+        "SWITCH_SERVER_URL", "http://127.0.0.1:8000"
+    )
+    room = (getattr(args, "room", None) or "").strip()
+    if not room:
+        rooms_cfg = merged.get("ROOMBRAIN_ROOMS") or ""
+        room = rooms_cfg.split(",")[0].strip() if rooms_cfg else ""
+    if not room:
+        print(
+            "brief: missing room (pass --room or set ROOMBRAIN_ROOMS)",
+            file=sys.stderr,
+        )
+        return 2
+    db_path = getattr(args, "db_path", None) or None
+    from brief.compose import compose_brief
+    from roombrain.agent.ops import post_standalone_message
+
+    text = compose_brief(room, db_path=db_path)
+    post_standalone_message(server, agent_id, api_key, room, text)
+    print("briefed %s" % room)
     return 0
 
 

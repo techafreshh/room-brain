@@ -93,3 +93,51 @@ def post_message(server, agent_id, api_key, connection_id, room_id,
                 client.close()
             except Exception:
                 pass
+
+
+def post_standalone_message(server, agent_id, api_key, room_id, text,
+                             connection_id=None, client=None):
+    """POST /agents/{id}/message with the reply text (no WS required).
+
+    The arguments object itself is the JSON body; alias keys are sent
+    so wire-unconfirmed shapes still carry the room and the text.
+    Authorization is always sent; X-Switch-Connection-Id only when a
+    connection id is supplied (live loop), omitted by the CLI.
+    Returns the result field when the response is a dict carrying it.
+    """
+    url = server.rstrip("/") + "/agents/%s/message" % quote(
+        str(agent_id), safe=""
+    )
+    headers = {}
+    if api_key:
+        headers["Authorization"] = "Bearer %s" % api_key
+    if connection_id:
+        headers["X-Switch-Connection-Id"] = str(connection_id)
+    body = {
+        "room_id": room_id,
+        "room": room_id,
+        "content": text,
+        "body": text,
+        "text": text,
+    }
+    owned = client is None
+    if owned:
+        import httpx
+
+        client = httpx.Client(timeout=10.0)
+    try:
+        response = client.post(url, json=body, headers=headers)
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except Exception:
+            return None
+        if isinstance(payload, dict) and "result" in payload:
+            return payload["result"]
+        return payload
+    finally:
+        if owned:
+            try:
+                client.close()
+            except Exception:
+                pass

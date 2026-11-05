@@ -380,6 +380,39 @@ async def run_forever(
                                 )
                             except Exception:
                                 pass
+                        elif name == "brief":
+                            room_id = message_room(frame)
+                            if not room_id:
+                                if isinstance(rooms, (list, tuple)):
+                                    room_id = str(rooms[0]) if rooms else ""
+                                elif rooms_str:
+                                    room_id = rooms_str.split(",")[0].strip()
+                                else:
+                                    room_id = ""
+                            try:
+                                from brief.compose import compose_brief
+
+                                reply = compose_brief(room_id)
+                            except Exception:
+                                reply = None
+                            if not reply:
+                                reply = "Morning Brief\nNo decisions"
+                            try:
+                                from roombrain.agent.ops import (
+                                    post_standalone_message,
+                                )
+
+                                await asyncio.to_thread(
+                                    post_standalone_message,
+                                    server,
+                                    agent_id,
+                                    api_key,
+                                    room_id,
+                                    reply,
+                                    cid,
+                                )
+                            except Exception:
+                                pass
                         elif name in ("draft", "approve", "reject"):
                             from actions.gate import dispatch_gate
 
