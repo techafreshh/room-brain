@@ -93,7 +93,37 @@ def build_parser():
     p_run.set_defaults(func=cmd_run)
     p_seed = sub.add_parser(
         "seed-demo",
-        help="Seed demo data (reserved for a later lap).",
+        help="Seed a believable demo week of decisions.",
+    )
+    p_seed.add_argument(
+        "--live",
+        action="store_true",
+        help="Post entries via post_message for real thread links.",
+    )
+    p_seed.add_argument(
+        "--local",
+        action="store_true",
+        help="Write entries with synthetic thread ids (offline default).",
+    )
+    p_seed.add_argument(
+        "--server",
+        default=os.environ.get("SWITCH_SERVER_URL", "http://127.0.0.1:8000"),
+        help="Switch server base URL (default: SWITCH_SERVER_URL or %(default)s).",
+    )
+    p_seed.add_argument(
+        "--rooms",
+        default=os.environ.get("ROOMBRAIN_ROOMS", ""),
+        help="Comma-separated room ids to post to (default: ROOMBRAIN_ROOMS).",
+    )
+    p_seed.add_argument(
+        "--env-file",
+        default=".env",
+        help="Env file for credentials/connection id (default: %(default)s).",
+    )
+    p_seed.add_argument(
+        "--db-path",
+        default=None,
+        help="Vault DB path (default: ROOMBRAIN_DB or data/roombrain.db).",
     )
     p_seed.set_defaults(func=cmd_seed_demo)
     return parser
@@ -131,7 +161,43 @@ def cmd_register(args):
 
 
 def cmd_seed_demo(args):
-    print("seed-demo: reserved for a later lap (no demo data yet).")
+    live = bool(getattr(args, "live", False))
+    mode = "live" if live else "local"
+    db_path = getattr(args, "db_path", None) or None
+    if mode == "local":
+        from seed.demo import seed_local
+
+        total = seed_local(db_path=db_path)
+        print("seeded %d memories (mode=local)" % total)
+        return 0
+    from roombrain.agent.protocol import (
+        load_or_create_connection_id,
+        read_env_values,
+    )
+    from seed.demo import seed_live
+
+    env_path = getattr(args, "env_file", None) or ".env"
+    merged = dict(read_env_values(env_path))
+    merged.update(os.environ)
+    agent_id = (merged.get("ROOMBRAIN_AGENT_ID") or "").strip()
+    api_key = (merged.get("ROOMBRAIN_API_KEY") or "").strip()
+    if not agent_id or not api_key:
+        print(
+            "seed-demo: missing ROOMBRAIN_AGENT_ID/ROOMBRAIN_API_KEY "
+            "(register first)",
+            file=sys.stderr,
+        )
+        return 2
+    server = getattr(args, "server", None) or merged.get(
+        "SWITCH_SERVER_URL", "http://127.0.0.1:8000"
+    )
+    rooms = getattr(args, "rooms", None) or merged.get("ROOMBRAIN_ROOMS") or ""
+    connection_id = load_or_create_connection_id(env_path)
+    total = seed_live(
+        server, agent_id, api_key, connection_id, rooms,
+        db_path=db_path,
+    )
+    print("seeded %d memories (mode=live)" % total)
     return 0
 
 
