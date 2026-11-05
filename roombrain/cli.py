@@ -91,10 +91,21 @@ def run_echo(health_port):
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    print(
+        "roombrain: serving /health on 127.0.0.1:%d" % health_port,
+        flush=True,
+        file=sys.stderr,
+    )
     try:
         for line in sys.stdin:
             if line.strip():
-                print(format_echo_line(line), flush=True)
+                try:
+                    print(format_echo_line(line), flush=True)
+                except BrokenPipeError:
+                    pass
+        # stdin hit EOF (e.g. launched detached with stdin closed): the
+        # health server must stay up, so wait until terminated.
+        thread.join()
     except KeyboardInterrupt:
         pass
     finally:
