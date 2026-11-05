@@ -70,6 +70,21 @@ def build_parser():
         help="Run the stdin echo loop with a health server.",
     )
     p_run.add_argument(
+        "--server",
+        default=os.environ.get("SWITCH_SERVER_URL", "http://127.0.0.1:8000"),
+        help="Switch server base URL (default: SWITCH_SERVER_URL or %(default)s).",
+    )
+    p_run.add_argument(
+        "--rooms",
+        default=os.environ.get("ROOMBRAIN_ROOMS", ""),
+        help="Comma-separated room ids to attach (default: ROOMBRAIN_ROOMS).",
+    )
+    p_run.add_argument(
+        "--env-file",
+        default=".env",
+        help="Env file for credentials/connection id (default: %(default)s).",
+    )
+    p_run.add_argument(
         "--health-port",
         type=int,
         default=DEFAULT_HEALTH_PORT,
@@ -121,9 +136,49 @@ def cmd_seed_demo(args):
 
 
 def cmd_run(args):
-    if args.echo:
+    if getattr(args, "echo", False):
         return run_echo(args.health_port)
-    print("run: pass --echo for the skeleton echo loop.")
+    import asyncio
+
+    from roombrain.agent.events import EXIT_TAKEOVER
+    from roombrain.agent.protocol import (
+        TakenOver,
+        load_or_create_connection_id,
+        read_env_values,
+        run_forever,
+    )
+
+    env_path = getattr(args, "env_file", None) or ".env"
+    merged = dict(read_env_values(env_path))
+    merged.update(os.environ)
+    agent_id = (merged.get("ROOMBRAIN_AGENT_ID") or "").strip()
+    api_key = (merged.get("ROOMBRAIN_API_KEY") or "").strip()
+    if not agent_id or not api_key:
+        print(
+            "run: missing ROOMBRAIN_AGENT_ID/ROOMBRAIN_API_KEY "
+            "(register first)",
+            file=sys.stderr,
+        )
+        return 2
+    server = getattr(args, "server", None) or merged.get(
+        "SWITCH_SERVER_URL", "http://127.0.0.1:8000"
+    )
+    rooms = getattr(args, "rooms", None) or merged.get("ROOMBRAIN_ROOMS") or ""
+    connection_id = load_or_create_connection_id(env_path)
+    try:
+        asyncio.run(
+            run_forever(
+                server,
+                agent_id,
+                api_key,
+                rooms,
+                connection_id=connection_id,
+                env_path=env_path,
+            )
+        )
+    except TakenOver as exc:
+        print("run: evicted: %s" % exc, file=sys.stderr)
+        return EXIT_TAKEOVER
     return 0
 
 
