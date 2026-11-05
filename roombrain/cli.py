@@ -316,13 +316,20 @@ def format_echo_line(line):
     return "echo: " + line.strip()
 
 
-def run_echo(health_port):
+def start_health_server(health_port):
     server = http.server.ThreadingHTTPServer(
         ("127.0.0.1", health_port), HealthHandler
     )
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    return server, thread
+
+
+def run_echo(health_port, server_holder=None):
+    server, thread = start_health_server(health_port)
+    if isinstance(server_holder, list):
+        server_holder.append(server)
     print(
         "roombrain: serving /health on 127.0.0.1:%d" % health_port,
         flush=True,
@@ -345,8 +352,14 @@ def run_echo(health_port):
     except KeyboardInterrupt:
         pass
     finally:
-        server.shutdown()
-        server.server_close()
+        try:
+            server.shutdown()
+        except (RuntimeError, OSError):
+            pass
+        try:
+            server.server_close()
+        except (RuntimeError, OSError):
+            pass
     return 0
 
 
