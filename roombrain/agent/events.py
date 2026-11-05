@@ -147,3 +147,29 @@ def message_body(frame):
     if body is None:
         return None
     return body if isinstance(body, str) else str(body)
+
+
+def parse_command(body):
+    """Split a `!`-prefixed body into (name, args); None otherwise."""
+    if not isinstance(body, str):
+        return None
+    stripped = body.strip()
+    if not stripped.startswith("!"):
+        return None
+    rest = stripped[1:]
+    if not rest or rest[0].isspace():
+        return None
+    parts = rest.split()
+    if not parts or not parts[0]:
+        return None
+    return (parts[0], parts[1:])
+
+
+def message_room(frame):
+    """Room carrier of a `message` frame; None when absent."""
+    value = frame_get(frame, "room_id", "room", "roomId", "channel")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value else None
+    return str(value)

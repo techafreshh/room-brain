@@ -349,10 +349,15 @@ class TestWebsocketLoop(unittest.IsolatedAsyncioTestCase):
             }))
             await ws.send(json.dumps({
                 "type": "message", "addressed": True,
-                "body": "hello-room", "sequence": 11,
+                "body": "!ping", "room_id": "room1",
+                "sequence": 11,
             }))
             await ws.send(json.dumps({
-                "type": "message", "sequence": 12,
+                "type": "message", "addressed": True,
+                "body": "hello-room", "sequence": 12,
+            }))
+            await ws.send(json.dumps({
+                "type": "message", "sequence": 13,
             }))
             await ws.wait_closed()
 
@@ -365,11 +370,12 @@ class TestWebsocketLoop(unittest.IsolatedAsyncioTestCase):
                 ))
                 try:
                     deadline = time.monotonic() + 5
-                    while "hello-room" not in buf.getvalue():
+                    while "!ping" not in buf.getvalue():
                         if time.monotonic() > deadline:
                             break
                         await asyncio.sleep(0.02)
-                    self.assertIn("hello-room", buf.getvalue())
+                    self.assertIn("!ping", buf.getvalue())
+                    self.assertNotIn("hello-room", buf.getvalue())
                 finally:
                     await _stop(task)
 
