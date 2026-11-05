@@ -173,3 +173,27 @@ def message_room(frame):
     if isinstance(value, str):
         return value if value else None
     return str(value)
+
+
+def message_thread(frame):
+    """Thread carrier of a `message` frame; None when absent."""
+    value = frame_get(frame, "thread_id", "thread", "threadId")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value else None
+    return str(value)
+
+
+def message_sender(frame):
+    """Sender carrier of a `message` frame; None when absent."""
+    value = frame_get(frame, "sender", "sender_name", "actor", "user_id")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value else None
+    try:
+        text = str(value)
+    except Exception:
+        return None
+    return text if text else None
