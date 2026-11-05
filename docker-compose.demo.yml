@@ -1,0 +1,54 @@
+# RoomBrain demo stack: Switch self-host + collab Mattermost.
+#
+# Start it with:
+#   docker compose -f docker-compose.demo.yml up
+# or via the Makefile shortcut:
+#   make demo-up
+#
+# The image `ghcr.io/sandbox-quantum/standalone-compose` is the PRD-pinned
+# Switch self-host bundle. Pass `--profile collab --profile gateway` on the
+# command line (baked into `command:` below) to enable the collab profile
+# (bundled Mattermost) plus the gateway profile. NOTE: these are *image*
+# profiles (runtime flags of standalone-compose), not Compose `profiles:`
+# (which would gate service startup behind `docker compose --profile ...`).
+# This file deliberately sets no Compose `profiles:` so a plain `up` starts
+# the demo stack.
+#
+# Ports:
+#   8000  Switch API  (matches SWITCH_SERVER_URL default
+#         http://127.0.0.1:8000 in roombrain/cli.py and .env.example)
+#   8065  Mattermost web UI (bundled by the collab profile)
+#   8081  Gateway callback base URL (Mattermost buttons need this reachable
+#         from the Mattermost container; host-gateway default)
+#
+# Env placeholders: copy .env.example to .env and fill the secrets there.
+# Only AGENT_REGISTRATION_TOKEN must be shared between this file and .env;
+# never commit real tokens (`.env` is gitignored, only `.env.example`
+# documents the keys).
+
+services:
+  switch:
+    image: ghcr.io/sandbox-quantum/standalone-compose:latest
+    command: ["--profile", "collab", "--profile", "gateway"]
+    ports:
+      - "8000:8000"
+      - "8065:8065"
+      - "8081:8081"
+    environment:
+      # One-shot token the agent presents at POST /agents. Must match
+      # AGENT_REGISTRATION_TOKEN in your .env (see .env.example).
+      AGENT_REGISTRATION_TOKEN: "${AGENT_REGISTRATION_TOKEN:-demo-token-change-me}"
+      # Server-side secret material for the self-host bundle.
+      SECRET_KEYS: "${SECRET_KEYS:-change-me-in-production}"
+      # Gateway admin bootstrap (used by the gateway profile).
+      GATEWAY_ADMIN_EMAIL: "${GATEWAY_ADMIN_EMAIL:-admin@example.com}"
+      GATEWAY_ADMIN_PASSWORD: "${GATEWAY_ADMIN_PASSWORD:-change-me}"
+      # Public identity of the self-host server.
+      ID_SERVER_NAME: "${ID_SERVER_NAME:-demo-switch}"
+      GATEWAY_PUBLIC_URL: "${GATEWAY_PUBLIC_URL:-http://127.0.0.1:8000}"
+    volumes:
+      - switch-data:/data
+    restart: unless-stopped
+
+volumes:
+  switch-data:
