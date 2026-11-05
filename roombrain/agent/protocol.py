@@ -7,14 +7,24 @@ reuse means another registration already owns the name: reuse the stored key
 and never retry with overwrite.
 """
 
+import asyncio
+import json
 import os
+import uuid
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 
 AGENT_ID_KEY = "ROOMBRAIN_AGENT_ID"
 API_KEY_KEY = "ROOMBRAIN_API_KEY"
+CONNECTION_ID_KEY = "ROOMBRAIN_CONNECTION_ID"
+ROOMS_KEY = "ROOMBRAIN_ROOMS"
 
 
 class RegistrationConflict(Exception):
     """The server answered 409: the name is taken, reuse the stored key."""
+
+
+class TakenOver(Exception):
+    """The server evicted this connection (taken_over): exit, never retry."""
 
 
 def read_env_values(path):
@@ -124,3 +134,176 @@ def register_agent(server, token, name, env_path=".env", client=None):
         raise ValueError("register: server response missing id/api_key")
     write_env_values(env_path, {AGENT_ID_KEY: agent_id, API_KEY_KEY: api_key})
     return agent_id, api_key, False
+
+
+def build_ws_url(
+    server, agent_id, connection_id, rooms, start_from=None,
+    expected_generation=None,
+):
+    """WebSocket URL for GET /agents/{id}/connection/ws.
+
+    Query always carries connection_id + rooms; reconnects add
+    start_from + expected_generation fencing (never sent on first open).
+    """
+    parsed = urlparse(server)
+    scheme = {"http": "ws", "https": "wss"}.get(parsed.scheme, parsed.scheme)
+    if isinstance(rooms, (list, tuple)):
+        rooms = ",".join(str(room) for room in rooms)
+    query = [
+        ("connection_id", str(connection_id)),
+        ("rooms", str(rooms or "")),
+    ]
+    if start_from is not None:
+        query.append(("start_from", str(start_from)))
+    if expected_generation is not None:
+        query.append(("expected_generation", str(expected_generation)))
+    path = "/agents/%s/connection/ws" % quote(str(agent_id), safe="")
+    return urlunparse((scheme, parsed.netloc, path, "", urlencode(query), ""))
+
+
+def load_or_create_connection_id(env_path=".env"):
+    """Stable reconnect identity: reuse the stored value, else generate
+    a uuid4, persist it with write_env_values, and return it."""
+    stored = (read_env_values(env_path).get(CONNECTION_ID_KEY) or "").strip()
+    if stored:
+        return stored
+    fallback = (os.environ.get(CONNECTION_ID_KEY) or "").strip()
+    if fallback:
+        return fallback
+    connection_id = str(uuid.uuid4())
+    write_env_values(env_path, {CONNECTION_ID_KEY: connection_id})
+    return connection_id
+
+
+async def run_forever(
+    server,
+    agent_id,
+    api_key,
+    rooms,
+    connection_id=None,
+    env_path=".env",
+    connect_fn=None,
+    first_frame_timeout=10.0,
+    max_backoff=30.0,
+):
+    """Always-on connect loop: ping/pong, fencing reconnect, taken_over exit.
+
+    Opens the connection with a Bearer handshake, answers every `ping`
+    with `{"type": "pong", "cursor": N}` before any dispatch, advances
+    one monotonic cursor over every sequence/seq/cursor frame, and on any
+    abnormal close reopens with the same connection_id plus
+    start_from=cursor and expected_generation=generation. A `taken_over`
+    eviction raises TakenOver (terminal: the caller exits 3, never retry).
+    A caller-supplied connect_fn(url) (async context manager yielding a
+    send/recv/close socket) is used as-is; otherwise a websockets client
+    with ping_interval=None is built per attempt.
+    """
+    from websockets.asyncio.client import connect as _ws_connect
+    from websockets.exceptions import ConnectionClosed, WebSocketException
+
+    from roombrain.agent.events import (
+        advance_cursor,
+        frame_type,
+        is_taken_over,
+        message_body,
+        parse_connection_state,
+        parse_frame,
+    )
+
+    cid = connection_id or load_or_create_connection_id(env_path)
+    if isinstance(rooms, (list, tuple)):
+        rooms_str = ",".join(str(room) for room in rooms)
+    else:
+        rooms_str = str(rooms or "")
+    if connect_fn is None:
+        def connect_fn(url):  # noqa: F811 - default opener, closed by ws
+            return _ws_connect(
+                url,
+                additional_headers={"Authorization": "Bearer %s" % api_key},
+                ping_interval=None,
+            )
+
+    cursor = 0
+    generation = None
+    attempts = 0
+    while True:
+        if attempts:
+            delay = 0.0 if attempts == 1 else min(
+                float(max_backoff), float(2 ** (attempts - 2))
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
+        if generation is None:
+            url = build_ws_url(server, agent_id, cid, rooms_str)
+        else:
+            url = build_ws_url(
+                server,
+                agent_id,
+                cid,
+                rooms_str,
+                start_from=cursor,
+                expected_generation=generation,
+            )
+        try:
+            async with connect_fn(url) as ws:
+                try:
+                    raw = await asyncio.wait_for(
+                        ws.recv(), timeout=first_frame_timeout
+                    )
+                except asyncio.TimeoutError:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    attempts += 1
+                    continue
+                frame = parse_frame(raw)
+                if is_taken_over(frame):
+                    raise TakenOver(
+                        "connection taken over (evicted: taken_over)"
+                    )
+                state = parse_connection_state(frame)
+                if state is None:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    attempts += 1
+                    continue
+                if state.cursor > cursor:
+                    cursor = state.cursor
+                generation = state.generation
+                attempts = 0
+                while True:
+                    raw = await ws.recv()
+                    frame = parse_frame(raw)
+                    cursor = advance_cursor(cursor, frame)
+                    ftype = frame_type(frame)
+                    if ftype == "ping":
+                        await ws.send(
+                            json.dumps({"type": "pong", "cursor": cursor})
+                        )
+                        continue
+                    if is_taken_over(frame):
+                        raise TakenOver(
+                            "connection taken over (evicted: taken_over)"
+                        )
+                    if ftype == "evicted":
+                        break  # evicted (other code): re-establish below.
+                    if ftype == "connection_state":
+                        restated = parse_connection_state(frame)
+                        if restated is not None:
+                            if restated.cursor > cursor:
+                                cursor = restated.cursor
+                            if restated.generation > generation:
+                                generation = restated.generation
+                        continue
+                    body = message_body(frame)
+                    if body is not None:
+                        print(body, flush=True)
+        except TakenOver:
+            raise
+        except (ConnectionClosed, WebSocketException, OSError,
+                asyncio.TimeoutError):
+            attempts += 1
+            continue
