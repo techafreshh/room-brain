@@ -9,7 +9,25 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from memory.vault import count_memories, search_memories, upsert_memory
+from memory.vault import (
+    count_memories,
+    get_draft,
+    get_room_owner,
+    list_decisions,
+    pending_draft_for_room,
+    record_room_owner,
+    search_memories,
+    stage_draft,
+    upsert_memory,
+)
+
+
+def _remove_path(path):
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        try:
+            os.unlink(path + suffix)
+        except OSError:
+            pass
 
 
 class TestVault(unittest.TestCase):
@@ -83,6 +101,89 @@ class TestVault(unittest.TestCase):
         first = upsert_memory("a", "#r", "@a:s", "t", "fact", 0.1, db_path=self.db)
         second = upsert_memory("b", "#r", "@a:s", "t", "fact", 0.2, db_path=self.db)
         self.assertGreater(second, first)
+
+    def test_reads_issue_no_ddl_or_commit(self):
+        upsert_memory(
+            "pricing ships Thursday", "#launch", "@techa:sw", "t1",
+            "decision", 0.9, db_path=self.db,
+        )
+        record_room_owner("#launch", "@techa:sw", db_path=self.db)
+        uid = stage_draft(
+            "send", "topic", "body", "#launch", "@techa:sw",
+            db_path=self.db,
+        )
+        commits = []
+        connect_args = []
+        real_connect = sqlite3.connect
+
+        class _SpyConn:
+            def __init__(self, inner):
+                self.__dict__["_inner"] = inner
+
+            def commit(self, *args, **kwargs):
+                commits.append(1)
+                return self._inner.commit(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        def _spy_connect(*args, **kwargs):
+            connect_args.append((args, kwargs))
+            return _SpyConn(real_connect(*args, **kwargs))
+
+        with mock.patch("memory.vault._ensure_schema") as ensure:
+            with mock.patch("sqlite3.connect", side_effect=_spy_connect):
+                self.assertEqual(count_memories(db_path=self.db), 1)
+                hits = search_memories("pricing", db_path=self.db)
+                self.assertEqual(len(hits), 1)
+                self.assertEqual(hits[0]["text"], "pricing ships Thursday")
+                self.assertEqual(
+                    get_room_owner("#launch", db_path=self.db), "@techa:sw"
+                )
+                draft = get_draft(uid, db_path=self.db)
+                self.assertIsNotNone(draft)
+                self.assertEqual(draft["id"], uid)
+                pending = pending_draft_for_room("#launch", db_path=self.db)
+                self.assertIsNotNone(pending)
+                decisions = list_decisions(db_path=self.db)
+                self.assertEqual(len(decisions), 1)
+            ensure.assert_not_called()
+            self.assertEqual(commits, [])
+            self.assertTrue(connect_args)
+            for _args, kwargs in connect_args:
+                self.assertTrue(kwargs.get("uri"))
+                self.assertIn("mode=ro", _args[0])
+
+    def test_reads_on_missing_db_return_empties_without_creating_file(self):
+        fresh = self.db + ".missing.db"
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                os.unlink(fresh + suffix)
+            except OSError:
+                pass
+        self.addCleanup(_remove_path, fresh)
+        self.assertEqual(count_memories(db_path=fresh), 0)
+        self.assertEqual(search_memories("pricing", db_path=fresh), [])
+        self.assertIsNone(get_room_owner("#launch", db_path=fresh))
+        self.assertIsNone(get_draft("d1", db_path=fresh))
+        self.assertIsNone(pending_draft_for_room("#launch", db_path=fresh))
+        self.assertEqual(list_decisions(db_path=fresh), [])
+        self.assertFalse(os.path.exists(fresh))
+
+    def test_upsert_on_fresh_path_still_bootstraps(self):
+        fresh = self.db + ".fresh.db"
+        try:
+            os.unlink(fresh)
+        except OSError:
+            pass
+        self.addCleanup(_remove_path, fresh)
+        row_id = upsert_memory(
+            "pricing ships Thursday", "#launch", "@techa:sw", "t1",
+            "decision", 0.9, db_path=fresh,
+        )
+        self.assertGreater(row_id, 0)
+        self.assertTrue(os.path.exists(fresh))
+        self.assertEqual(count_memories(db_path=fresh), 1)
 
 
 if __name__ == "__main__":

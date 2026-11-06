@@ -225,7 +225,10 @@ def hybrid_search(query, limit=5, db_path=None):
     except (TypeError, ValueError):
         limit = 5
     limit = max(1, min(limit, 50))
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return []
     try:
         try:
             query_vector = _embed_query(str(query))
@@ -284,7 +287,10 @@ def recent_decisions(topic="", days=7, limit=20, db_path=None):
         days = int(days)
     except (TypeError, ValueError):
         days = 7
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return []
     try:
         sql = (
             "SELECT id, text, room, actor, thread_id, timestamp, kind,"
@@ -303,6 +309,8 @@ def recent_decisions(topic="", days=7, limit=20, db_path=None):
         sql += " ORDER BY timestamp DESC, id DESC LIMIT %d" % limit
         rows = conn.execute(sql, params).fetchall()
         return [_enrich(row, row[7]) for row in rows]
+    except Exception:
+        return []
     finally:
         try:
             conn.close()
