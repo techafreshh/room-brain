@@ -134,10 +134,6 @@ class TestPostMessage(unittest.TestCase):
         self.assertIn("r1", body_text)
 
 
-def _parse_query(path):
-    return parse_qs(urlparse(path).query)
-
-
 class _FakeServer:
     """One-connection-script fake Switch recording handshake paths/auth."""
 
