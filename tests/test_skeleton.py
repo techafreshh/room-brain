@@ -60,32 +60,46 @@ class TestSkeleton(unittest.TestCase):
         stdin = io.StringIO("hello skeleton\n")
         stdout = io.StringIO()
         stderr = io.StringIO()
+        holder = []
         with mock.patch.object(sys, "stdin", stdin), mock.patch.object(
             sys, "stdout", stdout
         ), mock.patch.object(sys, "stderr", stderr):
             thread = threading.Thread(
-                target=cli_mod.run_echo, args=(port,), daemon=True
+                target=cli_mod.run_echo, args=(port, holder), daemon=True
             )
             thread.start()
-            deadline = time.time() + 5
-            body = None
-            last_exc = None
-            while time.time() < deadline:
+            try:
+                deadline = time.time() + 5
+                body = None
+                last_exc = None
+                while time.time() < deadline:
+                    try:
+                        with urllib.request.urlopen(
+                            "http://127.0.0.1:%d/health" % port, timeout=2
+                        ) as resp:
+                            self.assertEqual(resp.status, 200)
+                            body = resp.read()
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        time.sleep(0.05)
+                self.assertEqual(body, b'{"status":"ok"}')
+                self.assertIn("echo: hello skeleton", stdout.getvalue())
+                # stdin is exhausted (EOF) but the server must stay alive.
+                time.sleep(0.2)
+                self.assertTrue(thread.is_alive())
+            finally:
+                self.assertTrue(holder, "run_echo did not publish server")
+                holder[0].shutdown()
+                holder[0].server_close()
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+                probe = socket.socket()
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
-                    with urllib.request.urlopen(
-                        "http://127.0.0.1:%d/health" % port, timeout=2
-                    ) as resp:
-                        self.assertEqual(resp.status, 200)
-                        body = resp.read()
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    time.sleep(0.05)
-            self.assertEqual(body, b'{"status":"ok"}')
-            self.assertIn("echo: hello skeleton", stdout.getvalue())
-            # stdin is exhausted (EOF) but the server must stay alive.
-            time.sleep(0.2)
-            self.assertTrue(thread.is_alive())
+                    probe.bind(("127.0.0.1", port))
+                finally:
+                    probe.close()
 
 
 if __name__ == "__main__":
