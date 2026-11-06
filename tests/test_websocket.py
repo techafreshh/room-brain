@@ -13,6 +13,8 @@ import unittest
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from roombrain.agent.events import (
     advance_cursor,
     frame_get,
