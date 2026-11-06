@@ -7,6 +7,8 @@ import types
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 
 def _make_openai_double(captured, content=None, error=None):
     """Build a fake `openai` module whose OpenAI client records kwargs."""

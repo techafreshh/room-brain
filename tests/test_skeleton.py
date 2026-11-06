@@ -1,6 +1,7 @@
 """Skeleton tests: help text, byte-exact health body, echo formatting."""
 
 import io
+import os
 import socket
 import sys
 import threading
@@ -9,6 +10,8 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import roombrain.cli as cli_mod
 from roombrain.cli import HEALTH_BODY, HealthHandler, build_parser, format_echo_line

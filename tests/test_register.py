@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import httpx
 
 from roombrain.agent.protocol import (
