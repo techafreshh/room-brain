@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 DEFAULT_DB_PATH = os.path.join("data", "roombrain.db")
 EMBEDDING_DIM = 384
@@ -89,8 +90,13 @@ def _ensure_schema(conn, with_vec=False):
             pass
 
 
-def _open(db_path=None):
+def _open(db_path=None, *, readonly=False):
     path = _resolve_db_path(db_path)
+    if readonly:
+        uri = "file:%s?mode=ro" % quote(os.path.abspath(path))
+        conn = sqlite3.connect(uri, uri=True)
+        vec_ok = _try_load_vec(conn)
+        return conn, vec_ok
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -141,17 +147,28 @@ def upsert_memory(text, room, actor, thread_id, kind, confidence,
 
 def count_memories(db_path=None):
     """Return the number of rows in memories."""
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return 0
     try:
         (count,) = conn.execute("SELECT COUNT(*) FROM memories").fetchone()
         return int(count)
+    except Exception:
+        return 0
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def search_memories(query, limit=5, db_path=None):
     """Keyword search over memories; works with zero embeddings and zero vec."""
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return []
     try:
         rows = []
         try:
@@ -204,7 +221,7 @@ def list_decisions(topic="", days=7, limit=20, db_path=None):
     except (TypeError, ValueError):
         days = 7
     try:
-        conn, _ = _open(db_path)
+        conn, _ = _open(db_path, readonly=True)
     except Exception:
         return []
     try:
@@ -311,7 +328,10 @@ def get_draft(draft_id, db_path=None):
     uid = str(draft_id or "").strip().lower()
     if not uid:
         return None
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return None
     try:
         row = conn.execute(
             "SELECT " + ", ".join(_DRAFT_COLS) + " FROM drafts"
@@ -327,13 +347,21 @@ def get_draft(draft_id, db_path=None):
         if row is None:
             return None
         return _draft_to_dict(row)
+    except Exception:
+        return None
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def pending_draft_for_room(room, db_path=None):
     """Latest pending draft for a room; None when there is none."""
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return None
     try:
         row = conn.execute(
             "SELECT " + ", ".join(_DRAFT_COLS) + " FROM drafts"
@@ -344,8 +372,13 @@ def pending_draft_for_room(room, db_path=None):
         if row is None:
             return None
         return _draft_to_dict(row)
+    except Exception:
+        return None
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def mark_draft(draft_id, status, approver=None, db_path=None):
@@ -397,7 +430,10 @@ def get_room_owner(room, db_path=None):
     """Owner recorded for a room; None when no human seen yet."""
     if not room:
         return None
-    conn, _ = _open(db_path)
+    try:
+        conn, _ = _open(db_path, readonly=True)
+    except Exception:
+        return None
     try:
         row = conn.execute(
             "SELECT owner FROM room_owners WHERE room = ?", (room,),
@@ -405,5 +441,10 @@ def get_room_owner(room, db_path=None):
         if row is None or not row[0]:
             return None
         return row[0]
+    except Exception:
+        return None
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
