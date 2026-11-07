@@ -57,21 +57,17 @@ def post_message(server, agent_id, api_key, connection_id, room_id,
                  text, client=None):
     """POST /agents/{id}/ops/post_message with the reply text.
 
-    The arguments object itself is the JSON body; alias keys are sent
-    so wire-unconfirmed shapes still carry the room and the text.
+    Wire-confirmed 2026-11-06 against switch-core v0.31.0: the op takes
+    `body` (plus optional `thread_id`) and rejects every other key; the
+    target room is implicit — the single room the connection claimed on
+    open (`rooms=` on the WS URL), so `room_id` is documentation here.
     Returns the result field when the response is a dict carrying it.
     """
     url = server.rstrip("/") + "/agents/%s/ops/post_message" % quote(
         str(agent_id), safe=""
     )
     headers = _headers(api_key, connection_id)
-    body = {
-        "room_id": room_id,
-        "room": room_id,
-        "content": text,
-        "body": text,
-        "text": text,
-    }
+    body = {"body": text}
     owned = client is None
     if owned:
         import httpx
@@ -99,11 +95,11 @@ def post_standalone_message(server, agent_id, api_key, room_id, text,
                              connection_id=None, client=None):
     """POST /agents/{id}/message with the reply text (no WS required).
 
-    The arguments object itself is the JSON body; alias keys are sent
-    so wire-unconfirmed shapes still carry the room and the text.
-    Authorization is always sent; X-Switch-Connection-Id only when a
-    connection id is supplied (live loop), omitted by the CLI.
-    Returns the result field when the response is a dict carrying it.
+    Wire-confirmed 2026-11-06 against switch-core v0.31.0: the request is
+    `{room_id, content}` (extras ignored). Authorization is always sent;
+    X-Switch-Connection-Id only when a connection id is supplied (live
+    loop), omitted by the CLI. Returns the result field when the response
+    is a dict carrying it.
     """
     url = server.rstrip("/") + "/agents/%s/message" % quote(
         str(agent_id), safe=""
@@ -113,13 +109,7 @@ def post_standalone_message(server, agent_id, api_key, room_id, text,
         headers["Authorization"] = "Bearer %s" % api_key
     if connection_id:
         headers["X-Switch-Connection-Id"] = str(connection_id)
-    body = {
-        "room_id": room_id,
-        "room": room_id,
-        "content": text,
-        "body": text,
-        "text": text,
-    }
+    body = {"room_id": room_id, "content": text}
     owned = client is None
     if owned:
         import httpx

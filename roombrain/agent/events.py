@@ -50,14 +50,22 @@ def parse_frame(raw):
 
 
 def frame_type(frame):
-    """Top-level `type` of a frame, "" when absent or not a string."""
-    value = frame_get(frame, "type")
+    """Frame type of a frame, "" when absent or not a string.
+
+    Wire-confirmed 2026-11-06 against switch-core v0.31.0: frames arrive as
+    `{"event": name, "data": {...}, "id": seq}` — `event` is the type
+    carrier. The documented flat `{"type": name}` shape stays first for
+    forward/backward compatibility.
+    """
+    value = frame_get(frame, "type", "event")
     return value if isinstance(value, str) else ""
 
 
 def frame_get(frame, *names):
     """Case-sensitive lookup: top-level first, then one level inside the
-    first nested dict found under payload/data/state. None when absent."""
+    first nested dict found under payload/data/state, then that dict's own
+    `payload` (v0.31.0 wraps message fields at data.payload.*). None when
+    absent."""
     if not isinstance(frame, dict):
         return None
     for name in names:
@@ -69,10 +77,16 @@ def frame_get(frame, *names):
         if isinstance(value, dict):
             nested = value
             break
-    if nested is not None:
+    if nested is None:
+        return None
+    for name in names:
+        if name in nested:
+            return nested[name]
+    inner = nested.get("payload")
+    if isinstance(inner, dict):
         for name in names:
-            if name in nested:
-                return nested[name]
+            if name in inner:
+                return inner[name]
     return None
 
 
@@ -129,8 +143,12 @@ def is_taken_over(frame):
 
 
 def advance_cursor(cursor, frame):
-    """Monotonic cursor: max() over int sequence/seq/cursor, never back."""
-    for name in ("sequence", "seq", "cursor"):
+    """Monotonic cursor: max() over int sequence/seq/cursor/id, never back.
+
+    `id` is v0.31.0's top-level per-frame sequence (echoed as data.sequence);
+    reconnects pass it back as start_from.
+    """
+    for name in ("sequence", "seq", "cursor", "id"):
         value = _as_int(frame_get(frame, name))
         if value is not None and value > cursor:
             cursor = value
@@ -150,10 +168,17 @@ def message_body(frame):
 
 
 def parse_command(body):
-    """Split a `!`-prefixed body into (name, args); None otherwise."""
+    """Split a `!`-prefixed body into (name, args); None otherwise.
+
+    A leading `@mention` (how chat surfaces address an agent) is tolerated
+    and skipped, so both `!remember x` and `@roombrain !remember x` parse.
+    """
     if not isinstance(body, str):
         return None
     stripped = body.strip()
+    if stripped.startswith("@"):
+        _mention, _, rest = stripped.partition(" ")
+        stripped = rest.strip()
     if not stripped.startswith("!"):
         return None
     rest = stripped[1:]
