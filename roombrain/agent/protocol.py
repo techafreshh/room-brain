@@ -185,6 +185,7 @@ async def run_forever(
     connect_fn=None,
     first_frame_timeout=10.0,
     max_backoff=30.0,
+    capture_queue=None,
 ):
     """Always-on connect loop: ping/pong, fencing reconnect, taken_over exit.
 
@@ -203,6 +204,7 @@ async def run_forever(
 
     from roombrain.agent.events import (
         advance_cursor,
+        frame_get,
         frame_type,
         is_taken_over,
         message_body,
@@ -231,6 +233,10 @@ async def run_forever(
     cursor = 0
     generation = None
     attempts = 0
+    if capture_queue is None:
+        from capture.extract import CaptureQueue
+
+        capture_queue = CaptureQueue()
     while True:
         if attempts:
             delay = 0.0 if attempts == 1 else min(
@@ -303,6 +309,31 @@ async def run_forever(
                             if restated.generation > generation:
                                 generation = restated.generation
                         continue
+                    if ftype == "message":
+                        # Passive capture: every human chat line (addressed
+                        # or not) feeds the per-room debounce queue. The
+                        # agent's own and platform posts are skipped by
+                        # sender_kind; explicit `!` commands skip because
+                        # they already store themselves.
+                        raw_body = frame_get(frame, "body")
+                        sender_kind = frame_get(frame, "sender_kind") or ""
+                        if (isinstance(raw_body, str) and raw_body.strip()
+                                and sender_kind not in ("agent", "platform")
+                                and parse_command(raw_body) is None):
+                            if message_room(frame):
+                                cap_room = message_room(frame)
+                            elif isinstance(rooms, (list, tuple)):
+                                cap_room = str(rooms[0]) if rooms else ""
+                            elif rooms_str:
+                                cap_room = rooms_str.split(",")[0].strip()
+                            else:
+                                cap_room = ""
+                            capture_queue.ingest(
+                                cap_room,
+                                raw_body,
+                                actor=message_sender(frame) or "",
+                                thread_id=message_thread(frame) or "",
+                            )
                     body = message_body(frame)
                     if body is not None:
                         cmd = parse_command(body)

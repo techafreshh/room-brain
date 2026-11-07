@@ -108,7 +108,12 @@ def llm(prompt, *, model=None, api_key=None, timeout=10.0, client=None):
     otherwise a short-lived client is built and closed around the POST.
     """
     key = api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")
-    chosen = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
+    chosen = (
+        model
+        or os.environ.get(MODEL_ENV, "").strip()
+        or os.environ.get("LLM_MODEL", "").strip()
+        or DEFAULT_MODEL
+    )
     body = {
         "model": chosen,
         "messages": [
