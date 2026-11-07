@@ -1,0 +1,11 @@
+# Keep secrets, local state, and VCS out of the agent image. .env is
+# bind-mounted at runtime instead of baked in.
+.git
+.venv
+.env
+data/
+sent/
+__pycache__/
+*.pyc
+docker-compose*.yml
+docs/
