@@ -10,3 +10,5 @@ sent/
 __pycache__/
 .venv/
 *.egg-info/
+
+.agents/skills/
