@@ -107,8 +107,10 @@ class TestSeedDemo(unittest.TestCase):
             counter["n"] += 1
             seen.append(request)
             body = json.loads(request.content.decode("utf-8"))
-            self.assertTrue(body.get("text"))
-            self.assertTrue(body.get("room_id"))
+            # v0.31.0 contract: post_message takes {body} only; the room
+            # is implicit in the connection claim.
+            self.assertTrue(body.get("body"))
+            self.assertEqual(set(body), {"body"})
             return httpx.Response(
                 200, json={"result": "msg-%d" % counter["n"]}
             )

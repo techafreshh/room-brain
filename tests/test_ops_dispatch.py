@@ -133,9 +133,9 @@ class TestPostMessage(unittest.TestCase):
         lowered = {k.lower(): v for k, v in seen["headers"].items()}
         self.assertEqual(lowered.get("x-switch-connection-id"), "conn-9")
         self.assertEqual(lowered.get("authorization"), "Bearer sek")
-        body_text = json.dumps(seen["json"])
-        self.assertIn("pong", body_text)
-        self.assertIn("r1", body_text)
+        # v0.31.0 contract: the op takes {body} only and rejects every
+        # other key; the room is implicit in the connection claim.
+        self.assertEqual(seen["json"], {"body": "pong"})
 
 
 class _FakeServer:
